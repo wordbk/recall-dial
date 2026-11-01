@@ -230,7 +230,7 @@
   if (DEMO) { window.addEventListener('load', function () { load(window.DEMO_DATA); }); return; }
 
   showState('Finding today’s saves…');
-  fetch('/api/today?k=' + encodeURIComponent(KEY))
+  fetch('/api/today?k=' + encodeURIComponent(KEY), { cache: 'no-store' })
     .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
     .then(function (res) {
       if (!res.ok) return showState('Couldn’t reach Notion.', res.j.error || '');

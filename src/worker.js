@@ -10,7 +10,7 @@
 //   TIMEZONE      var     used to decide what "today" is
 
 const NOTION_VERSION = "2025-09-03";
-const VERSION = "5-cache-by-version";
+const VERSION = "6-no-browser-cache";
 
 export const SOURCES = [
   { id: "0eed1994-1465-4248-8e88-d1935d2f5932", label: "Stuff" },
@@ -72,9 +72,9 @@ async function handleToday(url, env, ctx) {
 
   try {
     const payload = await buildDay(today, env);
-    const res = json(payload, 200, { "Cache-Control": "max-age=2700" });
-    if (cache) ctx.waitUntil(cache.put(cacheKey, res.clone()));
-    return res;
+    // The relay keeps a copy for 45 min; the R1 and browsers keep none
+    if (cache) ctx.waitUntil(cache.put(cacheKey, json(payload, 200, { "Cache-Control": "max-age=2700" })));
+    return json(payload, 200, { "Cache-Control": "no-store" });
   } catch (err) {
     return json({ error: String(err.message || err) }, 502);
   }
@@ -389,5 +389,6 @@ function json(obj, status = 200, extra = {}) {
 function withCors(res) {
   const r = new Response(res.body, res);
   r.headers.set("Access-Control-Allow-Origin", "*");
+  r.headers.set("Cache-Control", "no-store");
   return r;
 }
