@@ -10,7 +10,7 @@
 //   TIMEZONE      var     used to decide what "today" is
 
 const NOTION_VERSION = "2025-09-03";
-const VERSION = "4-link-previews";
+const VERSION = "5-cache-by-version";
 
 export const SOURCES = [
   { id: "0eed1994-1465-4248-8e88-d1935d2f5932", label: "Stuff" },
@@ -63,7 +63,8 @@ async function handleToday(url, env, ctx) {
 
   // Cache per day for 45 min. Notion file links expire after an hour.
   const cache = typeof caches !== "undefined" ? caches.default : null;
-  const cacheKey = new Request(`https://cache.recall-dial/${today}`);
+  // Keyed by version so a new deploy never serves an older build's results
+  const cacheKey = new Request(`https://cache.recall-dial/${VERSION}/${today}`);
   if (cache && !url.searchParams.has("fresh")) {
     const hit = await cache.match(cacheKey);
     if (hit) return withCors(hit);
