@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=240, initial-scale=1.0, user-scalable=no">
+<title>Recall</title>
+<script src="qrcode.js"></script>
+<style>
+  :root {
+    --bg: #0c0c0d;
+    --ink: #f4f2ee;
+    --mute: #8a8780;
+    --rule: #2a2927;
+    --accent: #fe5000;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 240px; height: 282px; overflow: hidden;
+    background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  #app { position: relative; width: 240px; height: 282px; }
+
+  /* top rail */
+  .rail {
+    position: absolute; top: 0; left: 0; right: 0; height: 20px;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 10px; font-size: 9px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--mute); z-index: 3;
+  }
+  .rail b { color: var(--ink); font-weight: 700; }
+  .rail .count { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+  /* card */
+  .card { position: absolute; top: 20px; left: 0; right: 0; bottom: 14px;
+          transition: opacity .18s ease, transform .18s ease; }
+  .card.out { opacity: 0; transform: translateY(6px); }
+  .media {
+    height: 124px; margin: 0 10px; background: #1a1918; overflow: hidden;
+    position: relative;
+  }
+  .media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .media.none {
+    display: flex; align-items: flex-end; padding: 8px;
+    background: var(--accent); color: #0c0c0d;
+  }
+  .media.none span {
+    font-size: 30px; font-weight: 800; line-height: .9; letter-spacing: -.02em;
+    text-transform: uppercase; word-break: break-word;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .body { padding: 8px 10px 0; }
+  .meta {
+    font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--mute);
+    display: flex; gap: 6px; white-space: nowrap; overflow: hidden;
+  }
+  .meta .src { color: var(--ink); }
+  .title {
+    margin-top: 4px; font-size: 15px; line-height: 1.18; font-weight: 700; letter-spacing: -.01em;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .why {
+    margin-top: 5px; font-size: 11px; line-height: 1.3; color: var(--mute); font-style: italic;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+
+  /* bottom track: one tick per item, anchor marked */
+  .track {
+    position: absolute; left: 10px; right: 10px; bottom: 5px; height: 4px;
+    display: flex; gap: 2px;
+  }
+  .track i { flex: 1; background: var(--rule); }
+  .track i.on { background: var(--ink); }
+  .track i.anchor { background: var(--accent); }
+  .track i.anchor.on { background: var(--ink); box-shadow: 0 0 0 1px var(--accent); }
+
+  /* detail sheet (side button) */
+  .sheet {
+    position: absolute; inset: 0; background: var(--bg); z-index: 5;
+    padding: 26px 10px 10px; display: none; flex-direction: column;
+  }
+  .sheet.show { display: flex; }
+  .sheet .title { -webkit-line-clamp: 4; font-size: 14px; }
+  .sheet .why { -webkit-line-clamp: 4; color: var(--ink); font-style: normal; }
+  .sheet .note { margin-top: 5px; font-size: 10px; line-height: 1.3; color: var(--mute);
+                 display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .sheet .foot { margin-top: auto; display: flex; align-items: flex-end; gap: 8px; }
+  .sheet .qr { width: 76px; height: 76px; background: var(--ink); padding: 4px; flex: none; }
+  .sheet .qr img, .sheet .qr svg { width: 100%; height: 100%; display: block; }
+  .sheet .hint { font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--mute); line-height: 1.4; }
+  .sheet .hint b { color: var(--ink); font-weight: 700; display: block; letter-spacing: 0; text-transform: none; font-size: 11px; word-break: break-all; }
+
+  .state {
+    position: absolute; inset: 20px 10px 14px; display: flex; flex-direction: column;
+    justify-content: flex-end; font-size: 13px; line-height: 1.3;
+  }
+  .state small { display: block; margin-top: 6px; font-size: 10px; color: var(--mute); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="rail"><span><b>Recall</b> · <span id="when">—</span></span><span class="count" id="count"></span></div>
+  <div class="card" id="card"></div>
+  <div class="track" id="track"></div>
+  <div class="sheet" id="sheet"></div>
+</div>
+
+<script>
+(function () {
+  var params = new URLSearchParams(location.search);
+  var KEY = params.get('k');
+  var DEMO = params.has('demo') || !KEY;
+
+  var state = { items: [], index: 0, anchor: null, sheet: false };
+  var $ = function (id) { return document.getElementById(id); };
+  var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  function fmtDate(iso) {
+    var d = new Date(iso);
+    return MONTHS[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
+  }
+  function fmtMonth(iso) {
+    var d = new Date(iso + (iso.length === 10 ? 'T12:00:00' : ''));
+    return MONTHS[d.getMonth()] + ' ' + d.getFullYear();
+  }
+  function esc(s) {
+    return String(s || '').replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  function host(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return ''; } }
+
+  function showState(msg, sub) {
+    $('card').innerHTML = '<div class="state">' + esc(msg) + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</div>';
+    $('track').innerHTML = '';
+    $('count').textContent = '';
+  }
+
+  function render() {
+    var it = state.items[state.index];
+    if (!it) return showState('Nothing saved around this day.', 'Try again tomorrow.');
+    $('when').textContent = state.anchor ? 'from ' + fmtMonth(state.anchor) : 'today';
+    $('count').textContent = (state.index + 1) + ' / ' + state.items.length;
+
+    var media = it.image
+      ? '<div class="media"><img alt="" src="' + esc(it.image) + '"></div>'
+      : '<div class="media none"><span>' + esc(it.title.split(' ').slice(0, 3).join(' ')) + '</span></div>';
+
+    var card = $('card');
+    card.classList.add('out');
+    setTimeout(function () {
+      card.innerHTML = media +
+        '<div class="body">' +
+          '<div class="meta"><span class="src">' + esc(it.source) + '</span><span>' + fmtDate(it.saved) + '</span></div>' +
+          '<div class="title">' + esc(it.title) + '</div>' +
+          (it.why ? '<div class="why">' + esc(it.why) + '</div>' : '') +
+        '</div>';
+      var img = card.querySelector('img');
+      if (img) img.addEventListener('error', function () {
+        var m = img.parentNode;
+        m.className = 'media none';
+        m.innerHTML = '<span>' + esc(it.title.split(' ').slice(0, 3).join(' ')) + '</span>';
+      });
+      card.classList.remove('out');
+    }, 90);
+
+    var anchorIdx = state.anchorIndex;
+    var ticks = '';
+    for (var i = 0; i < state.items.length; i++) {
+      ticks += '<i class="' + (i === state.index ? 'on ' : '') + (i === anchorIdx ? 'anchor' : '') + '"></i>';
+    }
+    $('track').innerHTML = ticks;
+    if (state.sheet) renderSheet();
+  }
+
+  function renderSheet() {
+    var it = state.items[state.index];
+    if (!it) return;
+    var target = it.link || it.notionUrl || '';
+    var qrSvg = '';
+    if (target && typeof qrcode !== 'undefined') {
+      var q = qrcode(0, 'L'); q.addData(target); q.make();
+      qrSvg = q.createSvgTag({ cellSize: 2, margin: 0, scalable: true });
+    }
+    $('sheet').innerHTML =
+      '<div class="meta"><span class="src">' + esc(it.source) + '</span><span>' + fmtDate(it.saved) + '</span></div>' +
+      '<div class="title">' + esc(it.title) + '</div>' +
+      (it.why ? '<div class="why">' + esc(it.why) + '</div>'
+              : '<div class="why" style="color:var(--mute);font-style:italic">No “why” yet.</div>') +
+      (it.note ? '<div class="note">' + esc(it.note) + '</div>' : '') +
+      '<div class="foot">' +
+        (qrSvg ? '<div class="qr">' + qrSvg + '</div>' : '') +
+        '<div class="hint">Scan with your phone<b>' + esc(host(target) || 'notion.so') + '</b>Side button to close</div>' +
+      '</div>';
+  }
+
+  function move(d) {
+    if (state.sheet || !state.items.length) return;
+    var n = state.index + d;
+    if (n < 0 || n >= state.items.length) return;
+    state.index = n;
+    render();
+  }
+
+  window.addEventListener('scrollUp', function () { move(-1); });
+  window.addEventListener('scrollDown', function () { move(1); });
+  window.addEventListener('sideClick', function () {
+    if (!state.items.length) return;
+    state.sheet = !state.sheet;
+    $('sheet').classList.toggle('show', state.sheet);
+    if (state.sheet) renderSheet();
+  });
+
+  // Desktop testing: arrows = wheel, Escape = side button
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowUp') window.dispatchEvent(new Event('scrollUp'));
+    if (e.key === 'ArrowDown') window.dispatchEvent(new Event('scrollDown'));
+    if (e.key === 'Escape' || e.key === 'Enter') window.dispatchEvent(new Event('sideClick'));
+  });
+
+  function load(data) {
+    state.items = data.items || [];
+    state.index = Math.min(data.index || 0, Math.max(0, state.items.length - 1));
+    state.anchorIndex = state.index;
+    state.anchor = data.anchor;
+    render();
+  }
+
+  if (DEMO) { window.addEventListener('load', function () { load(window.DEMO_DATA); }); return; }
+
+  showState('Finding today’s saves…');
+  fetch('/api/today?k=' + encodeURIComponent(KEY))
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (res) {
+      if (!res.ok) return showState('Couldn’t reach Notion.', res.j.error || '');
+      load(res.j);
+    })
+    .catch(function () { showState('No connection.', 'Check Wi‑Fi and reopen.'); });
+})();
+</script>
+
+<script>
+// Sample data for ?demo and desktop preview. Not real saves.
+window.DEMO_DATA = {
+  today: "2026-11-01", anchor: "2021-03-14", index: 2,
+  items: [
+    { source: "Commonplace", title: "Sample article about type specimens", saved: "2021-03-06T15:00:00Z", image: null, why: "", note: "Sample note text.", link: "https://example.com/type" },
+    { source: "Stuff", title: "Sample object: a canvas tool bag", saved: "2021-03-10T15:00:00Z", image: null, why: "Sample reason it was saved.", note: "", link: "https://example.com/bag" },
+    { source: "Resources", title: "Sample grid systems reference", saved: "2021-03-14T15:00:00Z", image: null, why: "", note: "Sample note about a grid tool.", link: "https://example.com/grid" },
+    { source: "Commonplace", title: "Sample podcast episode on archives", saved: "2021-03-17T15:00:00Z", image: null, why: "Sample reason.", note: "", link: "https://example.com/pod" },
+    { source: "Stuff", title: "Sample ceramic mug", saved: "2021-03-22T15:00:00Z", image: null, why: "", note: "", link: null }
+  ]
+};
+</script>
+</body>
+</html>

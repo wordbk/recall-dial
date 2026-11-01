@@ -1,0 +1,5 @@
+.dial-key
+.deploy.log
+.wrangler/
+node_modules/
+.DS_Store
