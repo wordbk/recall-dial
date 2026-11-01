@@ -91,6 +91,20 @@
   .sheet .hint { font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--mute); line-height: 1.4; }
   .sheet .hint b { color: var(--ink); font-weight: 700; display: block; letter-spacing: 0; text-transform: none; font-size: 11px; word-break: break-all; }
 
+  /* voice note overlay (hold side button) */
+  .voice {
+    position: absolute; inset: 0; z-index: 8; background: var(--accent); color: #0c0c0d;
+    display: none; flex-direction: column; justify-content: space-between; padding: 26px 12px 12px;
+  }
+  .voice.show { display: flex; }
+  .voice .label { font-size: 9px; letter-spacing: .14em; text-transform: uppercase; font-weight: 700; }
+  .voice .big { font-size: 34px; line-height: .92; font-weight: 800; letter-spacing: -.02em; text-transform: uppercase; }
+  .voice .said { font-size: 13px; line-height: 1.3; font-weight: 600;
+                 display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+  .voice .dot { width: 10px; height: 10px; border-radius: 50%; background: #0c0c0d; display: inline-block;
+                margin-right: 6px; animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .2; } }
+
   .state {
     position: absolute; inset: 20px 10px 14px; display: flex; flex-direction: column;
     justify-content: flex-end; font-size: 13px; line-height: 1.3;
@@ -104,6 +118,7 @@
   <div class="card" id="card"></div>
   <div class="track" id="track"></div>
   <div class="sheet" id="sheet"></div>
+  <div class="voice" id="voice"></div>
 </div>
 
 <script>
@@ -203,9 +218,67 @@
     render();
   }
 
+  // ---- Voice note: hold side button, talk, let go → Puck Inbox ----
+  var voice = { listening: false, busy: false, lastEnd: 0 };
+  function showVoice(label, big, said) {
+    $('voice').innerHTML =
+      '<div class="label">' + label + '</div>' +
+      '<div><div class="big">' + big + '</div>' + (said ? '<div class="said" style="margin-top:10px">' + esc(said) + '</div>' : '') + '</div>';
+    $('voice').classList.add('show');
+  }
+  function hideVoice(delay) {
+    setTimeout(function () { if (!voice.listening && !voice.busy) $('voice').classList.remove('show'); }, delay || 0);
+  }
+  function startListening() {
+    if (voice.listening || voice.busy) return;
+    voice.listening = true;
+    showVoice('<span class="dot"></span>Listening', 'Talk,<br>then let go.');
+    if (typeof CreationVoiceHandler !== 'undefined') CreationVoiceHandler.postMessage('start');
+  }
+  function stopListening() {
+    if (!voice.listening) return;
+    voice.lastEnd = Date.now();
+    showVoice('Hold on', 'Writing<br>it down…');
+    if (typeof CreationVoiceHandler !== 'undefined') {
+      CreationVoiceHandler.postMessage('stop');
+    } else {
+      // Desktop test: type the note instead of speaking
+      var typed = window.prompt('Desktop test: type the note');
+      gotTranscript(typed || '');
+    }
+  }
+  function gotTranscript(text) {
+    voice.listening = false;
+    text = (text || '').trim();
+    if (!text) { showVoice('Nothing heard', 'Try<br>again.'); return hideVoice(1400); }
+    voice.busy = true;
+    showVoice('Saving', 'To the<br>inbox…', text);
+    if (DEMO) { voice.busy = false; showVoice('Demo only', 'Not<br>saved.', text); return hideVoice(2200); }
+    fetch('/api/note?k=' + encodeURIComponent(KEY), {
+      method: 'POST', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text })
+    })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        voice.busy = false;
+        if (res.ok) showVoice('Saved to Puck Inbox', 'Got it.', text);
+        else showVoice('Not saved', 'Problem.', res.j.error || '');
+        hideVoice(res.ok ? 2000 : 4000);
+      })
+      .catch(function () { voice.busy = false; showVoice('Not saved', 'No<br>connection.', text); hideVoice(4000); });
+  }
+  window.onPluginMessage = function (data) {
+    if (data && data.type === 'sttEnded') gotTranscript(data.transcript);
+  };
+  window.addEventListener('longPressStart', startListening);
+  window.addEventListener('longPressEnd', stopListening);
+
   window.addEventListener('scrollUp', function () { move(-1); });
   window.addEventListener('scrollDown', function () { move(1); });
   window.addEventListener('sideClick', function () {
+    // A long press can be followed by a stray click; ignore it
+    if (voice.listening || voice.busy || Date.now() - voice.lastEnd < 600) return;
     if (!state.items.length) return;
     state.sheet = !state.sheet;
     $('sheet').classList.toggle('show', state.sheet);
@@ -217,6 +290,10 @@
     if (e.key === 'ArrowUp') window.dispatchEvent(new Event('scrollUp'));
     if (e.key === 'ArrowDown') window.dispatchEvent(new Event('scrollDown'));
     if (e.key === 'Escape' || e.key === 'Enter') window.dispatchEvent(new Event('sideClick'));
+    if (e.key === ' ' && !e.repeat) window.dispatchEvent(new Event('longPressStart'));
+  });
+  document.addEventListener('keyup', function (e) {
+    if (e.key === ' ') window.dispatchEvent(new Event('longPressEnd'));
   });
 
   function load(data) {

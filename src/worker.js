@@ -10,7 +10,8 @@
 //   TIMEZONE      var     used to decide what "today" is
 
 const NOTION_VERSION = "2025-09-03";
-const VERSION = "6-no-browser-cache";
+const VERSION = "7-voice-notes";
+const PUCK_INBOX = "3c3d739c-e081-488a-8692-8b324ef5ad98";
 
 export const SOURCES = [
   { id: "0eed1994-1465-4248-8e88-d1935d2f5932", label: "Stuff" },
@@ -36,6 +37,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === "/api/today") return handleToday(url, env, ctx);
+    if (url.pathname === "/api/note" && request.method === "POST") return handleNote(request, url, env);
     if (url.pathname === "/api/health") return json({ ok: true, version: VERSION });
     if (url.pathname === "/api/preview") {
       // Debug: what does a saved link's site send back to the relay?
@@ -78,6 +80,37 @@ async function handleToday(url, env, ctx) {
   } catch (err) {
     return json({ error: String(err.message || err) }, 502);
   }
+}
+
+// Voice note from the R1 → the same Puck Inbox the watch writes to
+export async function handleNote(request, url, env) {
+  if (!env.DIAL_KEY || url.searchParams.get("k") !== env.DIAL_KEY) return json({ error: "bad key" }, 401);
+  let body = {};
+  try { body = await request.json(); } catch (e) {}
+  const text = String(body.text || "").trim().slice(0, 1900);
+  if (!text) return json({ error: "empty note" }, 400);
+  const title = text.length > 120 ? text.slice(0, 117) + "…" : text;
+  const res = await fetch("https://api.notion.com/v1/pages", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.NOTION_TOKEN}`,
+      "Notion-Version": NOTION_VERSION,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      parent: { type: "data_source_id", data_source_id: PUCK_INBOX },
+      properties: {
+        Note: { title: [{ text: { content: title } }] },
+        Raw: { rich_text: [{ text: { content: text } }] },
+        Source: { select: { name: "R1" } },
+        Status: { select: { name: "New" } },
+      },
+    }),
+  });
+  if (res.status === 404) return json({ error: "Puck Inbox not shared with Recall Dial" }, 502);
+  if (res.status === 403) return json({ error: "Recall Dial needs Insert content in Notion" }, 502);
+  if (!res.ok) return json({ error: `Notion ${res.status}` }, 502);
+  return json({ ok: true });
 }
 
 export async function buildDay(today, env) {
